@@ -125,7 +125,8 @@ class TheoryArith : public Theory
   std::pair<Integer,Integer> calculate_coefficients(const Integer& m1, const Integer& m2);
   /** CRT: uses chinese remainder theorem where it returns the new modulus and remainder */
   std::pair<Integer,Integer> find_new_candidate( const Integer& m1, const Integer& r1, const Integer& m2, const Integer& r2);
-
+  /** CRT: populates candidate terms for the CRT solver and tries the candaditates to see if it can solve the equation */
+  bool populate_candidate_terms(Node n);
 
  private:
   /**
@@ -185,7 +186,6 @@ class TheoryArith : public Theory
   std::map<int, std::map<Node, Node>> d_crtFFMap;
   /** CRT running candidates (modulus, remainder) */
   std::map<Node, std::pair<Integer, Integer>> d_crtCandidates;
-  bool populate_candidate_terms(Node n);
   bool d_crtSolved = false;
   /** The operator elimination utility */
   OperatorElim d_opElim;

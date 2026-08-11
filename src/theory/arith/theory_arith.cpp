@@ -671,6 +671,10 @@ Node TheoryArith::convertToFF(TNode n, const TypeNode& ffSort, std::map<Node, No
     return result;
 }
 
+Node TheoryArith::convertToBV(Node n, const TypeNode& ffSort, std::map<Node, Node>& nodeCache, std::map<Node, Node>& varMapping) {
+
+}
+
 std::pair<Integer,Integer> TheoryArith::calculate_coefficients(const Integer& m1, const Integer& m2) {
     if (m2 == 0) {
         // when m2 = 0, gcd(m1,m2) = m1
