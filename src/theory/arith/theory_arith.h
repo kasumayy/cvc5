@@ -25,6 +25,7 @@
 #include "theory/arith/proof_checker.h"
 #include "theory/theory.h"
 #include "theory/theory_state.h"
+#include "context/cdhashmap.h"
 
 namespace cvc5::internal {
 namespace theory {
@@ -118,6 +119,14 @@ class TheoryArith : public Theory
   /** Return a reference to the arith::InferenceManager. */
   InferenceManager& getInferenceManager() { return d_im; }
 
+  /** CRT: convert an integer term to its finite field equivalent */
+  Node convertToFF(TNode n, const TypeNode& ffSort, std::map<Node, Node>& nodeCache, std::map<Node, Node>& varMapping);
+  /** CRT: uses extended euclidean algorithm where it returns bezout coefficients */
+  std::pair<Integer,Integer> calculate_coefficients(const Integer& m1, const Integer& m2);
+  /** CRT: uses chinese remainder theorem where it returns the new modulus and remainder */
+  std::pair<Integer,Integer> find_new_candidate( const Integer& m1, const Integer& r1, const Integer& m2, const Integer& r2);
+
+
  private:
   /**
    * Update d_arithModelCache (if it is empty right now) and compute the termSet
@@ -166,6 +175,18 @@ class TheoryArith : public Theory
    * arithmetic.
    */
   std::unique_ptr<nl::NonlinearExtension> d_nonlinearExtension;
+  /** CRT Polynomial decection */
+  struct PolyInfo {
+    bool isPoly;
+    std::set<Node> vars;
+    };
+    std::unordered_map<Node, PolyInfo> d_polyMap;
+  /** CRT finite field conversion */
+  std::map<int, std::map<Node, Node>> d_crtFFMap;
+  /** CRT running candidates (modulus, remainder) */
+  std::map<Node, std::pair<Integer, Integer>> d_crtCandidates;
+  bool populate_candidate_terms(Node n);
+  bool d_crtSolved = false;
   /** The operator elimination utility */
   OperatorElim d_opElim;
   /** The preprocess utility */

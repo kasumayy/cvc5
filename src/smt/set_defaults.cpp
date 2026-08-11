@@ -1432,6 +1432,17 @@ void SetDefaults::widenLogic(LogicInfo& logic, const Options& opts) const
     logic = log;
     logic.lock();
   }
+
+  if (opts.arith.arithCrtSolver) {
+      if (!logic.isTheoryEnabled(THEORY_FF)) {
+          verbose(1) << "Enabling finite fields because CRT solver is enabled" << std::endl;
+          LogicInfo log(logic.getUnlockedCopy());
+          logic = logic.getUnlockedCopy();
+          logic.enableTheory(THEORY_FF);
+          logic.lock();
+      }
+  }
+
   if (opts.quantifiers.preSkolemQuantNested
       && opts.quantifiers.preSkolemQuantNestedWasSetByUser)
   {

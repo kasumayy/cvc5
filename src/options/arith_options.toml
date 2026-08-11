@@ -126,6 +126,15 @@ name   = "Arithmetic Theory"
   default    = "true"
   help       = "turns on Linear Diophantine Equation solver (Griggio, JSAT 2012)"
 
+  [[option]]
+    name       = "arithCrtSolver"
+    category   = "expert"
+    long       = "crt-solver"
+    type       = "bool"
+    default    = "false"
+    help       = "turns on Chinese Remainder Theorem based solver using finite fields"
+
+
 # Whether to split (= x y) into (and (<= x y) (>= x y)) in
 # arithmetic preprocessing.
 [[option]]
@@ -491,7 +500,7 @@ name   = "Arithmetic Theory"
 [[option.mode.ALWAYS]]
   name = "always"
   help = "Always use relevance."
-  
+
 [[option]]
   name       = "brabTest"
   category   = "regular"

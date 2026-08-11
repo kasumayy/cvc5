@@ -203,6 +203,8 @@ enum class InferenceId
   // propagation / contraction of variable bounds from icp
   ARITH_NL_ICP_PROPAGATION,
   //-------------------- ff inference
+  // Integer equation implies its finite field equivalent mod p (CRTSolver)
+  ARITH_CRT_FF,
   // ---------------------------------- end arith theory
 
   // ---------------------------------- finite field theory
