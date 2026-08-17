@@ -129,10 +129,20 @@ name   = "Arithmetic Theory"
   [[option]]
     name       = "arithCrtSolver"
     category   = "expert"
-    long       = "crt-solver"
-    type       = "bool"
-    default    = "false"
-    help       = "turns on Chinese Remainder Theorem based solver using finite fields"
+    long       = "crt-solver=MODE"
+    type       = "CrtSolverMode"
+    default    = "OFF"
+    help       = "CRT solver mode: off, ff (finite fields) and bv (bit-vector)"
+    help_mode = "turns on Chinese Remainder Theorem based solver using finite fields"
+  [[option.mode.OFF]]
+    name       = "off"
+    help       = "turns off CRT solver"
+  [[option.mode.FF]]
+    name       = "ff"
+    help       = "turns on CRT solver using finite fields"
+  [[option.mode.BV]]
+    name       = "bv"
+    help       = "turns on CRT solver using bit-vectors"
 
 
 # Whether to split (= x y) into (and (<= x y) (>= x y)) in

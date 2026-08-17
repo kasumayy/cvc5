@@ -10,6 +10,7 @@
  * Arithmetic theory.
  */
 
+#include <unordered_map>
 #include "cvc5_private.h"
 
 #pragma once
@@ -181,7 +182,8 @@ class TheoryArith : public Theory
     bool isPoly;
     std::set<Node> vars;
     };
-    std::unordered_map<Node, PolyInfo> d_polyMap;
+    std::unordered_map<Node, PolyInfo> d_polyExpMap;
+    std::unordered_map<Node, PolyInfo> d_polyEquation;
   /** CRT finite field conversion */
   std::map<int, std::map<Node, Node>> d_crtFFMap;
   /** CRT running candidates (modulus, remainder) */

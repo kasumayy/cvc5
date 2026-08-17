@@ -21,6 +21,7 @@
 #include "theory/arith/arith_evaluator.h"
 #include "theory/arith/arith_rewriter.h"
 #include "theory/arith/equality_solver.h"
+#include "theory/arith/linear/simplex.h"
 #include "theory/arith/linear/theory_arith_private.h"
 #include "theory/arith/nl/nonlinear_extension.h"
 #include "theory/arith/operator_elim.h"
@@ -134,8 +135,8 @@ void TheoryArith::preRegisterTerm(TNode n)
     bool allPoly = true;
     std::set<Node> allVars;
     for (size_t i = 0; i < n.getNumChildren(); i++) {
-        auto it = d_polyMap.find(n[i]);
-        if (it != d_polyMap.end() && it->second.isPoly) {
+        auto it = d_polyExpMap.find(n[i]);
+        if (it != d_polyExpMap.end() && it->second.isPoly) {
             allVars.insert(it->second.vars.begin(), it->second.vars.end());
         }
         else {
@@ -153,9 +154,9 @@ void TheoryArith::preRegisterTerm(TNode n)
     }
   }
   else if(k == Kind::EQUAL) {
-      auto lhs = d_polyMap.find(n[0]);
-      auto rhs = d_polyMap.find(n[1]);
-      if (lhs != d_polyMap.end() && rhs != d_polyMap.end() && lhs->second.isPoly && rhs->second.isPoly) {
+      auto lhs = d_polyExpMap.find(n[0]);
+      auto rhs = d_polyExpMap.find(n[1]);
+      if (lhs != d_polyExpMap.end() && rhs != d_polyExpMap.end() && lhs->second.isPoly && rhs->second.isPoly) {
           std::set<Node> allVars;
           allVars.insert(lhs->second.vars.begin(), lhs->second.vars.end());
           allVars.insert(rhs->second.vars.begin(), rhs->second.vars.end());
@@ -167,81 +168,10 @@ void TheoryArith::preRegisterTerm(TNode n)
           Trace("crtsolver") << "}" << std::endl;
       }
   }
-  d_polyMap[n] = info;
-
-  if (options().arith.arithCrtSolver  && info.isPoly && n.getKind() == Kind::EQUAL) {
-      if (d_crtSolved) return;
-      d_crtCandidates.clear();
-      NodeManager* nm = nodeManager();
-    for (int p : {2, 5, 7, 11, 13}) {
-        TypeNode ffSort = nm->mkFiniteFieldType(Integer(p));
-        std::map<Node, Node> nodeCache;
-        Node ffEq = convertToFF(n, ffSort, nodeCache, d_crtFFMap[p]);
-        if (ffEq.isNull()) {
-            Trace("candidate") << "FF version is null skip " << ffEq << std::endl;
-            continue;
-        }
-        Trace("crtsolver") << "FF version (modulus " << p << "): " << ffEq << std::endl;
-
-        // collect ff variables for current prime
-        std::vector<Node> ff_vars;
-        for (auto& i : d_crtFFMap[p]) {
-            ff_vars.push_back(i.second);
-        }
-        // model values to store values from subsolver
-        std::vector<Node> model_vals;
-
-        Options subopts;
-        subopts.copyValues(d_env.getOptions());
-        subopts.write_smt().produceModels = true;
-
-        SubsolverSetupInfo ssi(d_env, subopts);
-        Result result = checkWithSubsolver(ffEq, ff_vars, model_vals, ssi, true, 1000);
-        Trace("candidate") << "subsolver result: " << result << std::endl;
-
-        if (result.getStatus() == Result::SAT) {
-            // extract candidate values from subsolver
-            for (size_t i = 0; i < ff_vars.size(); i++) {
-                Integer val = model_vals[i].getConst<FiniteFieldValue>().toInteger();
-                // find which integer variable this ff var corresponds to
-                Node var;
-                for  (const auto& j : d_crtFFMap[p]) {
-                    if (j.second == ff_vars[i]) {
-                        var = j.first;
-                        break;
-                    }
-                }
-                if (var.isNull()){
-                    continue; // skip to the next ff var
-                }
-
-                // crt combine with previous primes
-                auto it = d_crtCandidates.find(var);
-                if (it == d_crtCandidates.end()) {
-                    // first prime for this variable so just store it
-                    d_crtCandidates[var] = {Integer(p), val};
-
-                } else {
-                    // crt combine with previous primes                        old mod          old remainder      new prime   new value
-                    std::pair<Integer, Integer> combined = find_new_candidate(it->second.first, it->second.second, Integer(p), val);
-                    d_crtCandidates[var] = combined;
-                }
-                Trace("candidate") << "candidate for " << var << ": " << d_crtCandidates[var].second << " mod " << d_crtCandidates[var].first << std::endl;
-            }
-        }
-        if (result.getStatus() == Result::UNSAT) {
-            TraceChannel("candidate") << "UNSAT mod " << p << std::endl;
-            Node nn = nm->mkNode(Kind::IMPLIES ,n, ffEq);
-            d_im.lemma(nn, InferenceId::ARITH_CRT_FF);
-            return;
-        }
-        if (populate_candidate_terms(n)) {
-            d_crtSolved = true;
-            return;
-        }
-    }
+  d_polyExpMap[n] = info;
+  if (info.isPoly && n.getKind() == Kind::EQUAL) {
+      d_polyEquation[n] = info;
   }
-
 
 
   bool isTransKind = isTranscendentalKind(k);
@@ -387,7 +317,7 @@ void TheoryArith::postCheck(Effort level)
     d_im.clearWaitingLemmas();
   }
   // we don't check at last call
-  Assert(level != Theory::EFFORT_LAST_CALL);
+  //Assert(level != Theory::EFFORT_LAST_CALL);
   // otherwise, check with the linear solver
   if (d_internal.postCheck(level))
   {
@@ -436,7 +366,127 @@ void TheoryArith::postCheck(Effort level)
     // Now, finalize the model cache, which constructs a substitution to be
     // used for getEqualityStatus.
     finalizeModelCache();
+
+    // Plan B: full effort
+    if (options().arith.arithCrtSolver == options::CrtSolverMode::FF) {
+      //if (d_crtSolved) return;
+      //d_crtCandidates.clear();
+      NodeManager* nm = nodeManager();
+      for (auto& eq : d_polyEquation) {
+        Trace("candidate") << "eq: " << eq.first << std::endl;
+        Node n = eq.first;
+        d_crtCandidates.clear();
+        for (int p : {2, 3, 5, 7, 11, 13, 17, 19, 23}) {
+            TypeNode ffSort = nm->mkFiniteFieldType(Integer(p));
+            std::map<Node, Node> nodeCache;
+            Node ffEq = convertToFF(n, ffSort, nodeCache, d_crtFFMap[p]);
+            if (ffEq.isNull()) {
+                Trace("candidate") << "FF version is null skip " << ffEq << std::endl;
+                continue;
+            }
+            Trace("crtsolver") << "FF version (modulus " << p << "): " << ffEq << std::endl;
+
+            // collect ff variables for current prime
+            std::vector<Node> ff_vars;
+            for (auto& i : d_crtFFMap[p]) {
+                ff_vars.push_back(i.second);
+            }
+            // model values to store values from subsolver
+            std::vector<Node> model_vals;
+
+            Options subopts;
+            subopts.copyValues(d_env.getOptions());
+            subopts.write_smt().produceModels = true;
+
+            SubsolverSetupInfo ssi(d_env, subopts);
+            Result result = checkWithSubsolver(ffEq, ff_vars, model_vals, ssi, true, 1000);
+            Trace("candidate") << "subsolver result: " << result << std::endl;
+
+            if (result.getStatus() == Result::SAT) {
+                // extract candidate values from subsolver
+                for (size_t i = 0; i < ff_vars.size(); i++) {
+                    Integer val = model_vals[i].getConst<FiniteFieldValue>().toInteger();
+                    // find which integer variable this ff var corresponds to
+                    Node var;
+                    for  (const auto& j : d_crtFFMap[p]) {
+                        if (j.second == ff_vars[i]) {
+                            var = j.first;
+                            break;
+                        }
+                    }
+                    if (var.isNull()){
+                        continue; // skip to the next ff var
+                    }
+
+                    // crt combine with previous primes
+                    auto it = d_crtCandidates.find(var);
+                    if (it == d_crtCandidates.end()) {
+                        // first prime for this variable so just store it
+                        d_crtCandidates[var] = {Integer(p), val};
+
+                    } else {
+                        // crt combine with previous primes                        old mod          old remainder      new prime   new value
+                        std::pair<Integer, Integer> combined = find_new_candidate(it->second.first, it->second.second, Integer(p), val);
+                        d_crtCandidates[var] = combined;
+                    }
+                    Trace("candidate") << "candidate for " << var << ": " << d_crtCandidates[var].second << " mod " << d_crtCandidates[var].first << std::endl;
+                }
+            }
+            if (result.getStatus() == Result::UNSAT) {
+                TraceChannel("candidate") << "subsolver UNSAT mod " << p << std::endl;
+                /* Node nn = nm->mkNode(Kind::IMPLIES ,n, ffEq);
+                d_im.lemma(nn, InferenceId::ARITH_CRT_FF);
+                return;
+                */
+                break;
+            }
+            if (populate_candidate_terms(n)) {
+                d_crtSolved = true;
+                return;
+            }
+        }
+      }
+    }
   }
+
+  if (level == Theory::EFFORT_LAST_CALL)
+  {
+      Trace("candidate") << " effort last call works " << std::endl;
+    // TODO: Add crt code PLAN C
+    if (options().arith.arithCrtSolver == options::CrtSolverMode::FF) {
+      //if (d_crtSolved) return;
+      //d_crtCandidates.clear();
+      TheoryModel* m = getValuation().getModel();
+      NodeManager* nm = nodeManager();
+      for (auto& eq : d_polyEquation) {
+        Trace("candidate") << "eq: " << eq.first << std::endl;
+        Node n = eq.first;
+        d_crtCandidates.clear();
+        for (int p : {2, 3, 5, 7, 11, 13, 17, 19, 23}) {
+            for(auto& i : d_crtFFMap[p]) {
+                Node var = i.first;
+                Node ffVar = i.second;
+                if (m->hasTerm(ffVar)) {
+                    Node ffVal = m->getValue(ffVar);
+                    Integer val = ffVal.getConst<FiniteFieldValue>().toInteger();
+                    auto it = d_crtCandidates.find(var);
+                    if (it == d_crtCandidates.end()) {
+                        d_crtCandidates[var] = {Integer(p), val};
+                    }
+                    else {
+                        std::pair<Integer, Integer> combined = find_new_candidate(it->second.first, it->second.second, Integer(p), val);
+                        d_crtCandidates[var] = combined;
+                    }
+                }
+            }
+        }
+        if (populate_candidate_terms(n)) {
+            return;
+        }
+      }
+    }
+  }
+
 }
 
 bool TheoryArith::preNotifyFact(
@@ -472,7 +522,7 @@ bool TheoryArith::needsCheckLastEffort()
       d_im.doPendingPhaseRequirements();
     }
   }
-  return false;
+  return true;
 }
 
 TrustNode TheoryArith::explain(TNode n)
@@ -573,7 +623,28 @@ bool TheoryArith::collectModelValues(TheoryModel* m,
 
 void TheoryArith::notifyRestart() { d_internal.notifyRestart(); }
 
-void TheoryArith::presolve() { d_internal.presolve(); }
+void TheoryArith::presolve() {
+    d_internal.presolve();
+    //Trace("candidate") << "presolve polyequation size: " << d_polyEquation.size() << std::endl;
+    if(options().arith.arithCrtSolver == options::CrtSolverMode::FF && d_polyEquation.size() > 0)
+    {
+        NodeManager* nm = nodeManager();
+        for (auto& eq : d_polyEquation)
+        {
+            Node n = eq.first;
+            for (int p : {2, 3 , 5 , 7, 11 , 13}) {
+                TypeNode ffSort = nm->mkFiniteFieldType(Integer(p));
+                std::map<Node, Node> nodeCache;
+                Node ffEq = convertToFF(n, ffSort, nodeCache, d_crtFFMap[p]);
+                if (!ffEq.isNull()) {
+                    Node lemma = nm->mkNode(Kind::IMPLIES, n, ffEq);
+                    d_im.lemma(lemma, InferenceId::ARITH_CRT_FF);
+                    Trace("candidate") << "presolve ffEq: " << ffEq << std::endl;
+                }
+            }
+        }
+    }
+}
 
 EqualityStatus TheoryArith::getEqualityStatus(TNode a, TNode b)
 {
@@ -671,9 +742,7 @@ Node TheoryArith::convertToFF(TNode n, const TypeNode& ffSort, std::map<Node, No
     return result;
 }
 
-Node TheoryArith::convertToBV(Node n, const TypeNode& ffSort, std::map<Node, Node>& nodeCache, std::map<Node, Node>& varMapping) {
-
-}
+//Node TheoryArith::convertToBV(Node n, const TypeNode& ffSort, std::map<Node, Node>& nodeCache, std::map<Node, Node>& varMapping) {}
 
 std::pair<Integer,Integer> TheoryArith::calculate_coefficients(const Integer& m1, const Integer& m2) {
     if (m2 == 0) {
