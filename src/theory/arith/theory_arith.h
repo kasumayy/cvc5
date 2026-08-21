@@ -122,6 +122,12 @@ class TheoryArith : public Theory
 
   /** CRT: convert an integer term to its finite field equivalent */
   Node convertToFF(TNode n, const TypeNode& ffSort, std::map<Node, Node>& nodeCache, std::map<Node, Node>& varMapping);
+  /** CRT: convert an integer term to its bitvector equivalent */
+  Node convertToBV(TNode n, int prime, const TypeNode& bvSort, std::map<Node, Node>& nodeCache, std::map<Node, Node>& varMapping);
+  /** CRT: run the CRT solver */
+  void runCrtSolver();
+  /** CRT: generate a list of prime numbers for the CRT solver */
+  std::vector<int> getCrtPrimes();
   /** CRT: uses extended euclidean algorithm where it returns bezout coefficients */
   std::pair<Integer,Integer> calculate_coefficients(const Integer& m1, const Integer& m2);
   /** CRT: uses chinese remainder theorem where it returns the new modulus and remainder */
@@ -188,7 +194,6 @@ class TheoryArith : public Theory
   std::map<int, std::map<Node, Node>> d_crtFFMap;
   /** CRT running candidates (modulus, remainder) */
   std::map<Node, std::pair<Integer, Integer>> d_crtCandidates;
-  bool d_crtSolved = false;
   /** The operator elimination utility */
   OperatorElim d_opElim;
   /** The preprocess utility */

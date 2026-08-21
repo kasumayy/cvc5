@@ -144,6 +144,32 @@ name   = "Arithmetic Theory"
     name       = "bv"
     help       = "turns on CRT solver using bit-vectors"
 
+    [[option]]
+      name       = "arithCrtArch"
+      category   = "expert"
+      long       = "crt-arch=MODE"
+      type       = "arithCrtArchMode"
+      default    = "AC"
+      help       = "CRT solver mode: off, ff (finite fields) and bv (bit-vector)"
+      help_mode = "turns on Chinese Remainder Theorem based solver using finite fields"
+    [[option.mode.AC]]
+      name       = "AC"
+      help       = "turns off CRT solver"
+    [[option.mode.A]]
+      name       = "A"
+      help       = "turns on CRT solver using finite fields"
+    [[option.mode.B]]
+      name       = "B"
+      help       = "turns on CRT solver using bit-vectors"
+
+      [[option]]
+        name       = "arithCrtPrimes"
+        category   = "expert"
+        long       = "crt-primes=N"
+        type       = "uint64_t"
+        default    = "6"
+        help       = "number of CRT primes to use"
+
 
 # Whether to split (= x y) into (and (<= x y) (>= x y)) in
 # arithmetic preprocessing.
