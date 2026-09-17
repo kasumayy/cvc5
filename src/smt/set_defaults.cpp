@@ -1442,6 +1442,15 @@ void SetDefaults::widenLogic(LogicInfo& logic, const Options& opts) const
           logic.lock();
       }
   }
+  if (opts.arith.arithCrtSolver == options::CrtSolverMode::BV) {
+      if (!logic.isTheoryEnabled(THEORY_BV)) {
+          verbose(1) << "Enabling bit vector because CRT solver is enabled" << std::endl;
+          LogicInfo log(logic.getUnlockedCopy());
+          logic = logic.getUnlockedCopy();
+          logic.enableTheory(THEORY_BV);
+          logic.lock();
+      }
+  }
 
   if (opts.quantifiers.preSkolemQuantNested
       && opts.quantifiers.preSkolemQuantNestedWasSetByUser)

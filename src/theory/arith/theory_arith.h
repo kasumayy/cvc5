@@ -192,8 +192,10 @@ class TheoryArith : public Theory
     std::unordered_map<Node, PolyInfo> d_polyEquation;
   /** CRT finite field conversion */
   std::map<int, std::map<Node, Node>> d_crtFFMap;
+  /** CRT Bit Vector conversion */
+  std::map<int, std::map<Node, Node>> d_crtBVMap;
   /** CRT running candidates (modulus, remainder) */
-  std::map<Node, std::pair<Integer, Integer>> d_crtCandidates;
+  std::map < Node, std::map<Node, std::pair<Integer, Integer>>> d_crtCandidates;
   /** The operator elimination utility */
   OperatorElim d_opElim;
   /** The preprocess utility */
