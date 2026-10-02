@@ -380,17 +380,21 @@ void TheoryArith::postCheck(Effort level)
   {
       Trace("candidate") << " effort last call works " << std::endl;
     // PLAN C
-    if (options().arith.arithCrtSolver == options::CrtSolverMode::FF && options().arith.arithCrtArch == options::arithCrtArchMode::AC) {
+    if ((options().arith.arithCrtSolver == options::CrtSolverMode::FF ||options().arith.arithCrtSolver == options::CrtSolverMode::BV) && options().arith.arithCrtArch == options::arithCrtArchMode::AC) {
+        Trace("candidate") << "plan c used" << std::endl;
         TheoryModel* m = getValuation().getModel();
+        bool isBV = (options().arith.arithCrtSolver == options::CrtSolverMode::BV );
         d_crtCandidates.clear();
         std::vector<int> crtPrimes = getCrtPrimes();
         for (int p : crtPrimes) {
-            for(auto& i : d_crtFFMap[p]) {
+            auto& varMap = isBV? d_crtBVMap[p] : d_crtFFMap[p];
+
+            for(auto& i : varMap) {
                 Node var = i.first;
                 Node ffVar = i.second;
                 if (m->hasTerm(ffVar)) {
                     Node ffVal = m->getValue(ffVar);
-                    Integer val = ffVal.getConst<FiniteFieldValue>().toInteger();
+                    Integer val = isBV? ffVal.getConst<BitVector>().getValue() : ffVal.getConst<FiniteFieldValue>().toInteger();
 
                     for (auto& eq : d_polyEquation ) {
                         auto& candidate = d_crtCandidates[eq.first];
@@ -555,18 +559,38 @@ void TheoryArith::presolve() {
     d_internal.presolve();
     // plan A
     //Trace("candidate") << "presolve polyequation size: " << d_polyEquation.size() << std::endl;
-    if(options().arith.arithCrtSolver == options::CrtSolverMode::FF && (options().arith.arithCrtArch == options::arithCrtArchMode::AC || options().arith.arithCrtArch == options::arithCrtArchMode::A) && d_polyEquation.size() > 0)
+    if((options().arith.arithCrtSolver == options::CrtSolverMode::FF || options().arith.arithCrtSolver == options::CrtSolverMode::BV) && (options().arith.arithCrtArch == options::arithCrtArchMode::AC || options().arith.arithCrtArch == options::arithCrtArchMode::A) && d_polyEquation.size() > 0)
     {
         NodeManager* nm = nodeManager();
+        bool isBV = (options().arith.arithCrtSolver == options::CrtSolverMode::BV);
         for (auto& eq : d_polyEquation)
         {
             Node n = eq.first;
             std::vector<int> crtPrimes = getCrtPrimes();
             for (int p : crtPrimes) {
-                TypeNode ffSort = nm->mkFiniteFieldType(Integer(p));
+                Node ffEq;
                 std::map<Node, Node> nodeCache;
-                Node ffEq = convertToFF(n, ffSort, nodeCache, d_crtFFMap[p]);
+                unsigned bw = 0;
+                if (isBV){
+                    bw = (unsigned)std::ceil(std::log2((p-1) * (p-1 ) + 1 ));
+                    TypeNode ffSort = nm->mkBitVectorType(bw);
+                    ffEq = convertToBV(n, p, ffSort, nodeCache, d_crtBVMap[p]);
+                }
+                else{
+                    TypeNode ffSort = nm->mkFiniteFieldType(Integer(p));
+                    ffEq = convertToFF(n, ffSort, nodeCache, d_crtFFMap[p]);
+                }
                 if (!ffEq.isNull()) {
+                    if (isBV) {
+                        Node primeBV = nm->mkConst(BitVector(bw , (uint64_t)p));
+                        std::vector<Node> eqns;
+                        eqns.push_back(ffEq);
+                        for (auto& i : d_crtBVMap[p]) {
+                            eqns.push_back(nm->mkNode(Kind::BITVECTOR_ULT , i.second, primeBV));
+                        }
+                        ffEq = nm->mkNode(Kind::AND , eqns);
+                    }
+
                     Node lemma = nm->mkNode(Kind::IMPLIES, n, ffEq);
                     d_im.lemma(lemma, InferenceId::ARITH_CRT_FF);
                     Trace("candidate") << "presolve ffEq: " << ffEq << std::endl;
@@ -734,7 +758,7 @@ void TheoryArith::runCrtSolver() {
         unsigned bw = 0;
         // sort depending on CRT mode
         if (isBV) {
-            bw = (unsigned)std::ceil(std::log2((p - 1) * (p - 1)));
+            bw = (unsigned)std::ceil(std::log2((p - 1) * (p - 1) + 1));
             ffSort = nm->mkBitVectorType(bw);
         }
         else {
@@ -960,22 +984,54 @@ std::pair<Integer,Integer> TheoryArith::find_new_candidate( const Integer& m1, c
 
 bool TheoryArith::populate_candidate_terms(Node n) {
     NodeManager* nm = nodeManager();
+    std::vector<Node> vars;
+    std::vector<Integer> remainder;
+    std::vector<Integer> mod;
+
     for (const auto& i : d_crtCandidates[n]) {
-        Node var = i.first;
-        Integer remainder = i.second.second;
-        Integer mod = i.second.first;
-        std::vector<Integer> offset_list = {Integer(0), mod , mod * Integer(-1), mod * Integer(2), mod * Integer(-2)};
-        for (const Integer& offset : offset_list) {
-            Integer new_val = remainder + offset;
+        vars.push_back(i.first);
+        remainder.push_back(i.second.second);
+        mod.push_back(i.second.first);
+    }
+    if (vars.empty()) {
+        return false;
+    }
+    size_t varsize = vars.size();
+    // std::vector<Integer> offset_list = {Integer(0), mod , mod * Integer(-1), mod * Integer(2), mod * Integer(-2)};
+    std::vector<int> offset_multiplier = {0,1,-1,2,-2};
+    std::vector<size_t> index(varsize,0);
+
+    while (true) {
+        Node tmp = n;
+        for (size_t i = 0; i < varsize; i++) {
+            Integer new_val = remainder[i] + mod[i] * Integer(offset_multiplier[index[i]]);
             Node new_node = nm->mkConstInt(Rational(new_val));
             //Node assign = nm->mkNode(Kind::EQUAL, var, new_node); // (= var (new_val))
             //Node query = nm->mkNode(Kind::AND, n, assign); // (and (n) (new_node)
-            Node tmp = n.substitute(TNode(var), TNode(new_node));
-            Node check = rewrite(tmp);
-            if (check == nm->mkConst(true)){
-                Trace("candidate") << "solution found: " << var << " = " << new_val << std::endl;
-                return true;
+            tmp = tmp.substitute(TNode(vars[i]), TNode(new_node));
+        }
+        Node check = rewrite(tmp);
+        if (check == nm->mkConst(true)){
+            //Trace("candidate") << "solution found: " << var << " = " << new_val << std::endl;
+            Trace("candidate") << "solution found: " << n << std::endl;
+            return true;
+        }
+        size_t curr = 0;
+        while (curr < varsize) {
+            index[curr]++;
+            if (index[curr] < offset_multiplier.size())
+            {
+                break;
             }
+            else
+            {
+                index[curr] = 0;
+                curr++;
+            }
+        }
+        if (curr == varsize)
+        {
+            break;
         }
     }
     return false;
