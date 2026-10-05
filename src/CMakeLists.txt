@@ -412,6 +412,8 @@ libcvc5_add_sources(
   theory/arith/bound_inference.h
   theory/arith/branch_and_bound.cpp
   theory/arith/branch_and_bound.h
+  theory/arith/crt_solver.cpp
+  theory/arith/crt_solver.h
   theory/arith/delta_rational.cpp
   theory/arith/delta_rational.h
   theory/arith/equality_solver.cpp
@@ -1599,7 +1601,7 @@ endif()
 add_dependencies(cvc5-obj SymFPU)
 target_include_directories(cvc5-obj SYSTEM PRIVATE ${SymFPU_INCLUDE_DIR})
 
-# GMP has to be included at the end because of linker ordering issues when 
+# GMP has to be included at the end because of linker ordering issues when
 # generating a static library.
 add_dependencies(cvc5-obj GMP)
 target_include_directories(cvc5-obj PRIVATE ${GMP_INCLUDE_DIR})
