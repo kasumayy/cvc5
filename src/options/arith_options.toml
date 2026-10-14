@@ -144,31 +144,41 @@ name   = "Arithmetic Theory"
     name       = "bv"
     help       = "turns on CRT solver using bit-vectors"
 
-    [[option]]
-      name       = "arithCrtArch"
-      category   = "expert"
-      long       = "crt-arch=MODE"
-      type       = "arithCrtArchMode"
-      default    = "AC"
-      help       = "CRT solver mode: off, ff (finite fields) and bv (bit-vector)"
-      help_mode = "turns on Chinese Remainder Theorem based solver using finite fields"
-    [[option.mode.AC]]
-      name       = "AC"
-      help       = "turns off CRT solver"
-    [[option.mode.A]]
-      name       = "A"
-      help       = "turns on CRT solver using finite fields"
-    [[option.mode.B]]
-      name       = "B"
-      help       = "turns on CRT solver using bit-vectors"
+[[option]]
+    name       = "arithCrtArch"
+    category   = "expert"
+    long       = "crt-arch=MODE"
+    type       = "arithCrtArchMode"
+    default    = "C"
+    help       = "CRT solver mode: off, ff (finite fields) and bv (bit-vector)"
+    help_mode = "turns on Chinese Remainder Theorem based solver using finite fields"
+[[option.mode.NONE]]
+    name       = "none"
+    help       = "runs auxiliary constraints only"
+[[option.mode.C]]
+    name       = "C"
+    help       = "turns on CRT solver at last effort (needs --crt-aux-constraints)"
+[[option.mode.B]]
+    name       = "B"
+    help       = "run crt solver at full effort"
 
-      [[option]]
-        name       = "arithCrtPrimes"
-        category   = "expert"
-        long       = "crt-primes=N"
-        type       = "uint64_t"
-        default    = "6"
-        help       = "number of CRT primes to use"
+[[option]]
+    name       = "arithCrtPrimes"
+    category   = "expert"
+    long       = "crt-primes=N"
+    type       = "uint64_t"
+    default    = "6"
+    help       = "number of CRT primes to use"
+
+[[option]]
+    name       = "arithCrtAuxConstraints"
+    category   = "expert"
+    long       = "crt-aux-constraints"
+    type       = "bool"
+    default    = "false"
+    help       = "generate auxiliary constraints P(x) = 0 => P'(x') mod k = 0 when a olynomial equation is detected"
+
+
 
 
 # Whether to split (= x y) into (and (<= x y) (>= x y)) in

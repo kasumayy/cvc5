@@ -1,16 +1,21 @@
 #include "theory/arith/crt_solver.h"
 #include <cmath>
+#include "theory/arith/linear/simplex.h"
+#include "theory/arith/operator_elim.h"
 #include "theory/arith/theory_arith.h"
 #include "theory/arith/inference_manager.h"
 #include "theory/theory_model.h"
 #include "options/smt_options.h"
 #include "options/options.h"
+#include "options/base_options.h"
 
 namespace cvc5::internal {
 namespace theory {
 namespace arith {
 
-CrtSolver::CrtSolver(Env& env, TheoryState& st, InferenceManager& im) : EnvObj(env),d_st(st), d_im(im){}
+CrtSolver::CrtSolver(Env& env, TheoryState& st, InferenceManager& im) : EnvObj(env), d_assignment(context()), d_st(st), d_im(im), d_polyExpMap(userContext()), d_polyEquation(userContext()){
+    //initializeSubsolver(d_subsolver, d_env);
+}
 CrtSolver::~CrtSolver(){};
 
 void CrtSolver::PolyParser(TNode n) {
@@ -75,8 +80,14 @@ void CrtSolver::PolyParser(TNode n) {
     }
 }
 
+void CrtSolver::NotifyFact(TNode atom, bool pol) {
+    d_assignment[atom] = pol;
+    Trace("candidate") << "notifyfact " << atom << "is " << pol << std::endl;
+}
+
 void CrtSolver::planA() {
-    if((options().arith.arithCrtSolver == options::CrtSolverMode::FF || options().arith.arithCrtSolver == options::CrtSolverMode::BV) && (options().arith.arithCrtArch == options::arithCrtArchMode::AC || options().arith.arithCrtArch == options::arithCrtArchMode::A) && d_polyEquation.size() > 0)
+    //options().arith.arithCrtAuxConstraints && options().arith.arithCrtSolver != options::CrtSolverMode::OFF
+    if(options().arith.arithCrtAuxConstraints && options().arith.arithCrtSolver != options::CrtSolverMode::OFF && d_polyEquation.size() > 0)
     {
         NodeManager* nm = nodeManager();
         bool isBV = (options().arith.arithCrtSolver == options::CrtSolverMode::BV);
@@ -85,32 +96,32 @@ void CrtSolver::planA() {
             Node n = eq.first;
             std::vector<int> crtPrimes = getCrtPrimes();
             for (int p : crtPrimes) {
-                Node ffEq;
+                Node modEq;
                 std::map<Node, Node> nodeCache;
                 unsigned bw = 0;
                 if (isBV){
                     bw = (unsigned)std::ceil(std::log2((p-1) * (p-1 ) + 1 ));
                     TypeNode ffSort = nm->mkBitVectorType(bw);
-                    ffEq = convertToBV(n, p, ffSort, nodeCache, d_crtBVMap[p]);
+                    modEq = convertToBV(n, p, ffSort, nodeCache, d_crtBVMap[p]);
                 }
                 else{
                     TypeNode ffSort = nm->mkFiniteFieldType(Integer(p));
-                    ffEq = convertToFF(n, ffSort, nodeCache, d_crtFFMap[p]);
+                    modEq = convertToFF(n, ffSort, nodeCache, d_crtFFMap[p]);
                 }
-                if (!ffEq.isNull()) {
+                if (!modEq.isNull()) {
                     if (isBV) {
                         Node primeBV = nm->mkConst(BitVector(bw , (uint64_t)p));
                         std::vector<Node> eqns;
-                        eqns.push_back(ffEq);
+                        eqns.push_back(modEq);
                         for (auto& i : d_crtBVMap[p]) {
                             eqns.push_back(nm->mkNode(Kind::BITVECTOR_ULT , i.second, primeBV));
                         }
-                        ffEq = nm->mkNode(Kind::AND , eqns);
+                        modEq = nm->mkNode(Kind::AND , eqns);
                     }
 
-                    Node lemma = nm->mkNode(Kind::IMPLIES, n, ffEq);
-                    d_im.lemma(lemma, InferenceId::ARITH_CRT_FF);
-                    Trace("candidate") << "presolve ffEq: " << ffEq << std::endl;
+                    Node lemma = nm->mkNode(Kind::IMPLIES, n, modEq);
+                    d_im.lemma(lemma, InferenceId::ARITH_CRT);
+                    Trace("candidate") << "presolve ffEq: " << modEq << std::endl;
                 }
             }
         }
@@ -125,7 +136,7 @@ void CrtSolver::planB() {
 }
 
 void CrtSolver::planC() {
-    if ((options().arith.arithCrtSolver == options::CrtSolverMode::FF ||options().arith.arithCrtSolver == options::CrtSolverMode::BV) && options().arith.arithCrtArch == options::arithCrtArchMode::AC) {
+    if ((options().arith.arithCrtSolver == options::CrtSolverMode::FF ||options().arith.arithCrtSolver == options::CrtSolverMode::BV) && options().arith.arithCrtArch == options::arithCrtArchMode::C && options().arith.arithCrtAuxConstraints) {
         Trace("candidate") << "plan c used" << std::endl;
         TheoryModel* m = d_st.getValuation().getModel(); // used theoryarith object
         bool isBV = (options().arith.arithCrtSolver == options::CrtSolverMode::BV );
@@ -136,10 +147,10 @@ void CrtSolver::planC() {
 
             for(auto& i : varMap) {
                 Node var = i.first;
-                Node ffVar = i.second;
-                if (m->hasTerm(ffVar)) {
-                    Node ffVal = m->getValue(ffVar);
-                    Integer val = isBV? ffVal.getConst<BitVector>().getValue() : ffVal.getConst<FiniteFieldValue>().toInteger();
+                Node modVar = i.second;
+                if (m->hasTerm(modVar)) {
+                    Node modVal = m->getValue(modVar);
+                    Integer val = isBV? modVal.getConst<BitVector>().getValue() : modVal.getConst<FiniteFieldValue>().toInteger();
 
                     for (auto& eq : d_polyEquation ) {
                         auto& candidate = d_crtCandidates[eq.first];
@@ -174,6 +185,17 @@ Node CrtSolver::convertToFF(TNode n, const TypeNode& ffSort, std::map<Node, Node
     Kind k = n.getKind();
     Node result;
 
+    auto convertChildren = [&](std::vector<Node>& childs) -> bool {
+        for (size_t i = 0; i < n.getNumChildren(); i++) {
+            Node c = convertToFF(n[i],ffSort, nodeCache, varMapping);
+            if (c.isNull()) {
+                return false;
+            }
+            childs.push_back(c);
+        }
+        return true;
+    };
+
     if (k == Kind::CONST_INTEGER){
         // integer constant to FF element (value mod p)
         Integer val = n.getConst<Rational>().getNumerator();
@@ -190,11 +212,23 @@ Node CrtSolver::convertToFF(TNode n, const TypeNode& ffSort, std::map<Node, Node
         varMapping[n] = result;
         }
     }
+    else if (k == Kind::NEG) {
+        Node v = convertToFF(n[0],ffSort, nodeCache, varMapping);
+        if(!v.isNull()) {
+            result = nm->mkNode(Kind::FINITE_FIELD_NEG, v);
+        }
+    }
     else if (k == Kind::MULT || k == Kind::NONLINEAR_MULT) {
-        result = nm->mkNode(Kind::FINITE_FIELD_MULT, convertToFF(n[0], ffSort, nodeCache, varMapping), convertToFF(n[1], ffSort, nodeCache, varMapping));
+        std::vector<Node> children;
+        if (convertChildren(children)){
+            result = nm->mkNode(Kind::FINITE_FIELD_MULT, children);
+        }
     }
     else if (k == Kind::ADD) {
-        result = nm->mkNode(Kind::FINITE_FIELD_ADD, convertToFF(n[0], ffSort, nodeCache, varMapping), convertToFF(n[1], ffSort, nodeCache, varMapping));
+        std::vector<Node> children;
+        if (convertChildren(children)){
+            result = nm->mkNode(Kind::FINITE_FIELD_ADD, children);
+        }
     }
     else if (k == Kind::SUB) {
         // x - y to x + neg(y)
@@ -222,6 +256,17 @@ Node CrtSolver::convertToBV(TNode n, int prime, const TypeNode& bvSort, std::map
     unsigned bw = bvSort.getBitVectorSize();
     Node primeBV = nm->mkConst(BitVector(bw, (uint64_t)prime));
 
+    auto convertChildren = [&](std::vector<Node>& childs) -> bool {
+        for (size_t i = 0; i < n.getNumChildren(); i++) {
+            Node c = convertToBV(n[i], prime, bvSort, nodeCache, varMapping);
+            if (c.isNull()) {
+                return false;
+            }
+            childs.push_back(c);
+        }
+        return true;
+    };
+
     if (k == Kind::CONST_INTEGER){
         Integer val = n.getConst<Rational>().getNumerator();
         Integer mod = val.floorDivideRemainder(Integer(prime));
@@ -237,13 +282,34 @@ Node CrtSolver::convertToBV(TNode n, int prime, const TypeNode& bvSort, std::map
         varMapping[n] = result;
         }
     }
+    else if (k == Kind::NEG) {
+        Node v = convertToBV(n[0], prime,bvSort, nodeCache, varMapping);
+        if (!v.isNull()) {
+            result = nm->mkNode(Kind::BITVECTOR_SUB, primeBV, v);
+            result = nm->mkNode(Kind::BITVECTOR_UREM, result,primeBV);
+        }
+    }
     else if (k == Kind::MULT || k == Kind::NONLINEAR_MULT) {
-        result = nm->mkNode(Kind::BITVECTOR_MULT, convertToBV(n[0], prime, bvSort, nodeCache, varMapping), convertToBV(n[1], prime, bvSort, nodeCache, varMapping));
-        result = nm->mkNode(Kind::BITVECTOR_UREM, result, primeBV);
+        std::vector<Node> children;
+        if(convertChildren(children)) {
+            Node current = children[0];
+            for (size_t i = 1; i < children.size(); i++) {
+                current = nm->mkNode(Kind::BITVECTOR_MULT, current, children[i]);
+                current = nm->mkNode(Kind::BITVECTOR_UREM, current, primeBV);
+            }
+            result = current;
+        }
     }
     else if (k == Kind::ADD) {
-        result = nm->mkNode(Kind::BITVECTOR_ADD, convertToBV(n[0], prime, bvSort, nodeCache, varMapping), convertToBV(n[1], prime, bvSort, nodeCache, varMapping));
-        result = nm->mkNode(Kind::BITVECTOR_UREM, result, primeBV);
+        std::vector<Node> children;
+        if(convertChildren(children)) {
+            Node current = children[0];
+            for (size_t i = 1; i < children.size(); i++) {
+                current = nm->mkNode(Kind::BITVECTOR_ADD, current, children[i]);
+                current = nm->mkNode(Kind::BITVECTOR_UREM, current, primeBV);
+            }
+            result = current;
+        }
     }
     else if (k == Kind::SUB) {
         result = nm->mkNode(Kind::BITVECTOR_SUB, convertToBV(n[0], prime, bvSort, nodeCache, varMapping), convertToBV(n[1], prime, bvSort, nodeCache, varMapping));
@@ -265,90 +331,121 @@ void CrtSolver::runCrtSolver() {
     d_crtCandidates.clear();
     bool isBV = (options().arith.arithCrtSolver == options::CrtSolverMode::BV);
 
+    if(d_subsolver == nullptr) {
+        Options subopts;
+        subopts.copyValues(d_env.getOptions());
+        subopts.write_smt().produceModels = true;
+        subopts.write_smt().unsatAssumptions = true;
+        subopts.write_base().incrementalSolving = true;
+        SubsolverSetupInfo ssi(d_env, subopts);
+        initializeSubsolver(nm,d_subsolver,ssi);
+    }
+
     std::vector<int> crtprimes = getCrtPrimes();
     for (int p : crtprimes) {
         Trace("candidate") << "CURRENT PRIME IN B MODE CRTSOLVER"<< p << std::endl;
-        TypeNode ffSort;
+        TypeNode typeSort;
         unsigned bw = 0;
         // sort depending on CRT mode
         if (isBV) {
             bw = (unsigned)std::ceil(std::log2((p - 1) * (p - 1) + 1));
-            ffSort = nm->mkBitVectorType(bw);
+            typeSort = nm->mkBitVectorType(bw);
         }
         else {
-            ffSort = nm->mkFiniteFieldType(Integer(p));
+            typeSort = nm->mkFiniteFieldType(Integer(p));
         }
+
+        std::vector<Node> assumptions;
+        std::map<Node,Node> booltoeqn;
+        std::vector<Node> type_vars;
 
         for (auto& eq : d_polyEquation) {
             Node n = eq.first;
-            std::map<Node, Node> nodeCache;
-            // converting equation dpending on crt mode
-            Node ffEq;
-            if (isBV){
-                ffEq = convertToBV(n, p, ffSort, nodeCache, d_crtBVMap[p]);
-            }
-            else{
-                ffEq = convertToFF(n, ffSort, nodeCache, d_crtFFMap[p]);
-            }
-            if (ffEq.isNull()) {
-                Trace("candidate") << "FF version is null skip " << ffEq << std::endl;
+            auto curr = d_assignment.find(n);
+            if (curr == d_assignment.end() || !(*curr).second){
                 continue;
             }
-            Trace("crtsolver") << "FF version (modulus " << p << "): " << ffEq << std::endl;
+            Node eqBool;
+            auto boolIt = d_subeqns[p].find(n);
+            if (boolIt != d_subeqns[p].end()){
+                eqBool = boolIt->second;
+            }
+            else {
+                std::map<Node, Node> nodeCache;
+                // converting equation dpending on crt mode
+                Node modEq;
+                if (isBV){
+                    modEq = convertToBV(n, p, typeSort, nodeCache, d_crtBVMap[p]);
+                }
+                else{
+                    modEq = convertToFF(n, typeSort, nodeCache, d_crtFFMap[p]);
+                }
+                if (modEq.isNull()) {
+                    Trace("candidate") << "FF version is null skip " << modEq << std::endl;
+                    continue;
+                }
+                Trace("crtsolver") << "FF version (modulus " << p << "): " << modEq << std::endl;
 
-            Trace("candidate") << "p=" << p << " eq=" << n << " null=" << ffEq.isNull() << std::endl;
+                Trace("candidate") << "p=" << p << " eq=" << n << " null=" << modEq.isNull() << std::endl;
 
-            std::vector<Node> ff_vars;
+                // adding range assertions for BV
+                if (isBV) {
+                    Node primeBV = nm->mkConst(BitVector(bw , (uint64_t)p));
+                    std::vector<Node> eqns;
+                    eqns.push_back(modEq);
+                    for (auto& i : d_crtBVMap[p]) {
+                        eqns.push_back(nm->mkNode(Kind::BITVECTOR_ULT , i.second, primeBV));
+                    }
+                    modEq = nm->mkNode(Kind::AND , eqns);
+                }
+                // one boolean per euation per prime
+                SkolemManager* sm = nm->getSkolemManager();
+                eqBool = sm->mkDummySkolem("crteq", nm->booleanType());
+                d_subsolver->assertFormula(nm->mkNode(Kind::IMPLIES, eqBool, modEq));
+                d_subeqns[p][n] = eqBool;
+            }
+            assumptions.push_back(eqBool);
+            booltoeqn[eqBool] = n;
+
+            type_vars.clear();
             if (isBV) {
                 // collect bv variables for current prime
                 for (auto& i : d_crtBVMap[p]) {
-                    ff_vars.push_back(i.second);
+                    type_vars.push_back(i.second);
                 }
             }
             else {
                 // collect ff variables for current prime
                 for (auto& i : d_crtFFMap[p]) {
-                    ff_vars.push_back(i.second);
+                    type_vars.push_back(i.second);
                 }
             }
+        }
 
-            // adding range assertions for BV
-            if (isBV) {
-                Node primeBV = nm->mkConst(BitVector(bw , (uint64_t)p));
-                std::vector<Node> eqns;
-                eqns.push_back(ffEq);
-                for (auto& i : d_crtBVMap[p]) {
-                    eqns.push_back(nm->mkNode(Kind::BITVECTOR_ULT , i.second, primeBV));
-                }
-                ffEq = nm->mkNode(Kind::AND , eqns);
+            if (assumptions.empty()) {
+                continue;
             }
-            // model values to store values from subsolver
-            std::vector<Node> model_vals;
 
-            Options subopts;
-            subopts.copyValues(d_env.getOptions());
-            subopts.write_smt().produceModels = true;
-
-            SubsolverSetupInfo ssi(d_env, subopts);
-            Result result = checkWithSubsolver(ffEq, ff_vars, model_vals, ssi, true, 1000);
+            Result result = d_subsolver->checkSat(assumptions);
             Trace("candidate") << "subsolver result: " << result << std::endl;
 
             if (result.getStatus() == Result::SAT) {
                 // extract candidate values from subsolver
-                for (size_t i = 0; i < ff_vars.size(); i++) {
+                for (size_t i = 0; i < type_vars.size(); i++) {
+                    Node model_vals = d_subsolver->getValue(type_vars[i]);
                     Integer val;
 
                     if (isBV) {
-                        val = model_vals[i].getConst<BitVector>().getValue();
+                        val = model_vals.getConst<BitVector>().getValue();
                     }
                     else {
-                        val = model_vals[i].getConst<FiniteFieldValue>().toInteger();
+                        val = model_vals.getConst<FiniteFieldValue>().toInteger();
                     }
                     // find which integer variable this ff var corresponds to
                     Node var;
                     if (isBV) {
                         for  (const auto& j : d_crtBVMap[p]) {
-                            if (j.second == ff_vars[i]) {
+                            if (j.second == type_vars[i]) {
                                 var = j.first;
                                 break;
                             }
@@ -356,7 +453,7 @@ void CrtSolver::runCrtSolver() {
                     }
                     else {
                         for  (const auto& j : d_crtFFMap[p]) {
-                            if (j.second == ff_vars[i]) {
+                            if (j.second == type_vars[i]) {
                                 var = j.first;
                                 break;
                             }
@@ -366,30 +463,44 @@ void CrtSolver::runCrtSolver() {
                         continue; // skip to the next ff var
                     }
 
-                    // crt combine with previous primes
-                    auto& candidate = d_crtCandidates[n];
-                    auto it = candidate.find(var);
-                    if (it == candidate.end()) {
-                        // first prime for this variable so just store it
-                        candidate[var] = {Integer(p), val};
-
-                    } else {
-                        // crt combine with previous primes                        old mod          old remainder      new prime   new value
-                        std::pair<Integer, Integer> combined = find_new_candidate(it->second.first, it->second.second, Integer(p), val);
-                        candidate[var] = combined;
+                    // storing all equaitons for the same model to use
+                    for (auto& z : assumptions) {
+                        Node eqn = booltoeqn[z];
+                        // crt combine with previous primes
+                        auto& candidate = d_crtCandidates[eqn];
+                        auto it = candidate.find(var);
+                        if (it == candidate.end()) {
+                            // first prime for this variable so just store it
+                            candidate[var] = {Integer(p), val};
+                        } else {
+                            // crt combine with previous primes                        old mod          old remainder      new prime   new value
+                            std::pair<Integer, Integer> combined = find_new_candidate(it->second.first, it->second.second, Integer(p), val);
+                            candidate[var] = combined;
+                        }
+                        Trace("candidate") << "candidate for " << var << ": " << candidate[var].second << " mod " << candidate[var].first << std::endl;
                     }
-                    Trace("candidate") << "candidate for " << var << ": " << candidate[var].second << " mod " << candidate[var].first << std::endl;
                 }
             }
             if (result.getStatus() == Result::UNSAT) {
                 Trace("candidate") << "subsolver UNSAT mod " << p << std::endl;
-                Node nn = nm->mkNode(Kind::IMPLIES ,n, ffEq);
-                d_im.lemma(nn, InferenceId::ARITH_CRT_FF);
-                //d_im.conflict(n, InferenceId::ARITH_CRT_FF);
+                // finding whic bool equations cause unsat assumptions
+                std::vector<Node> boolunsat = d_subsolver->getUnsatAssumptions();
+                std::vector<Node> cause;
+                for (Node i : boolunsat) {
+                    auto eqIt = booltoeqn.find(i);
+                    if (eqIt != booltoeqn.end()) {
+                        cause.push_back(eqIt->second);
+                    }
+                }
+                if (cause.empty()){
+                    continue;
+                }
+
+                Node nn = cause.size() == 1 ? cause[0] : nm->mkNode(Kind::AND, cause);
+                d_im.conflict(nn, InferenceId::ARITH_CRT);
+                //d_im.conflict(n, InferenceId::ARITH_CRT);
                 return;
             }
-
-        }
     }
     for (auto& eq : d_polyEquation) {
         if (populate_candidate_terms(eq.first)) {

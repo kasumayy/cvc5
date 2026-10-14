@@ -8,8 +8,10 @@
 #include <unordered_map>
 #include <utility>
 #include <set>
+#include <memory>
 
 #include "expr/node.h"
+#include "context/cdhashmap.h"
 #include "smt/env_obj.h"
 #include "theory/smt_engine_subsolver.h"
 #include "util/bitvector.h"
@@ -28,6 +30,7 @@ class CrtSolver : EnvObj {
 
         void PolyParser(TNode n);
         void planA();
+        void NotifyFact(TNode atom, bool pol);
         void planB();
         void planC();
 
@@ -47,13 +50,18 @@ class CrtSolver : EnvObj {
         /** CRT: populates candidate terms for the CRT solver and tries the candaditates to see if it can solve the equation */
         bool populate_candidate_terms(Node n);
 
+
+        context::CDHashMap<TNode, bool>d_assignment;
+        TheoryState& d_st;
+        InferenceManager& d_im;
+
         /** CRT Polynomial decection */
         struct PolyInfo {
           bool isPoly;
           std::set<Node> vars;
           };
-          std::unordered_map<Node, PolyInfo> d_polyExpMap;
-          std::unordered_map<Node, PolyInfo> d_polyEquation;
+        context::CDHashMap<Node, PolyInfo> d_polyExpMap;
+        context::CDHashMap<Node, PolyInfo> d_polyEquation;
         /** CRT finite field conversion */
         std::map<int, std::map<Node, Node>> d_crtFFMap;
         /** CRT Bit Vector conversion */
@@ -62,9 +70,9 @@ class CrtSolver : EnvObj {
         std::map < Node, std::map<Node, std::pair<Integer, Integer>>> d_crtCandidates;
         /** subsolver */
         std::unique_ptr<SolverEngine> d_subsolver;
+        /** booleans from subssolver */
+        std::map<int, std::map<Node, Node>> d_subeqns;
 
-        TheoryState& d_st;
-        InferenceManager& d_im;
 };
 }
 }

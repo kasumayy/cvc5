@@ -204,7 +204,7 @@ enum class InferenceId
   ARITH_NL_ICP_PROPAGATION,
   //-------------------- ff inference
   // Integer equation implies its finite field equivalent mod p (CRTSolver)
-  ARITH_CRT_FF,
+  ARITH_CRT,
   // ---------------------------------- end arith theory
 
   // ---------------------------------- finite field theory
